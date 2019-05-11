@@ -16,12 +16,19 @@ package com.google.codelabs.cosu;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.admin.DevicePolicyManager;
+import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -44,6 +51,10 @@ public class MainActivity extends Activity {
     private ImageView imageView;
     private String mCurrentPhotoPath;
     private int permissionCheck;
+    public DevicePolicyManager mDevicePolicyManager;
+
+    public static final String EXTRA_FILEPATH =
+            "com.google.codelabs.cosu.EXTRA_FILEPATH";
 
     private static final int REQUEST_IMAGE_CAPTURE = 1;
     private static final int PERMISSIONS_REQUEST_WRITE_EXTERNAL_STORAGE = 2;
@@ -54,29 +65,26 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        mDevicePolicyManager = (DevicePolicyManager)
+                getSystemService(Context.DEVICE_POLICY_SERVICE);
+
         // Setup button which calls intent to camera app to take a picture
         takePicButton = (Button) findViewById(R.id.pic_button);
         takePicButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                if (intent.resolveActivity(getPackageManager()) != null) {
-                    File photoFile=null;
-                    try{
-                        photoFile = createImageFile();
-                    } catch (IOException e) {
-                        Log.e(FILE_TAG, e.getMessage());
-                    }
-                    if (photoFile != null) {
-                        intent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(photoFile));
-                        startActivityForResult(intent, REQUEST_IMAGE_CAPTURE);
-                    }
-                }
-                else{
+                Intent fileintent = new Intent(Intent.ACTION_GET_CONTENT);
+                fileintent.setType("video/mp4");
+                try {
+                    startActivityForResult(fileintent, REQUEST_IMAGE_CAPTURE);
+                } catch (ActivityNotFoundException e) {
                     Toast.makeText(
                             getApplicationContext(),R.string.no_camera_apps,Toast.LENGTH_SHORT)
                             .show();
+
                 }
+
+
             }
         });
 
@@ -93,34 +101,42 @@ public class MainActivity extends Activity {
         }
     }
 
-    private File createImageFile() throws IOException {
-
-        // Check for storage permission
-        if (permissionCheck == PackageManager.PERMISSION_GRANTED) {
-
-            // Create an image file name
-            String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String imageFileName = "JPEG_" + timeStamp + "_";
-            File storageDir = getApplicationContext().getExternalFilesDir(
-                    null);
-            File image = File.createTempFile(
-                    imageFileName,  /* prefix */
-                    ".jpg",         /* suffix */
-                    storageDir      /* directory */
-            );
-
-            // Save a file: path for use with ACTION_VIEW intents
-            mCurrentPhotoPath = image.getAbsolutePath();
-            return image;
-        }
-        return null;
-    }
-
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_OK) {
-            setImageToView();
+            //setImageToView();
+            Uri uri = data.getData();
+            String documentId = DocumentsContract.getDocumentId(uri);
+            String idArr[] = documentId.split(":");
+            if(idArr.length == 2) {
+                String docType = idArr[0];
+                String realDocId = idArr[1];
+
+                mCurrentPhotoPath = getApplicationContext().getExternalFilesDir(
+                        realDocId).getAbsolutePath();
+
+                File path = Environment.getExternalStoragePublicDirectory(realDocId);
+                mCurrentPhotoPath = path.getAbsolutePath();
+
+                Toast.makeText(
+                        getApplicationContext(), mCurrentPhotoPath, Toast.LENGTH_SHORT)
+                        .show();
+
+                if (mDevicePolicyManager.isLockTaskPermitted(
+                        getApplicationContext().getPackageName())) {
+                    Intent lockIntent = new Intent(getApplicationContext(),
+                            LockedActivity.class);
+                    lockIntent.putExtra(EXTRA_FILEPATH, mCurrentPhotoPath);
+                    startActivity(lockIntent);
+                    finish();
+                } else {
+                    Toast.makeText(getApplicationContext(),
+                            R.string.not_lock_whitelisted, Toast.LENGTH_SHORT)
+                            .show();
+                }
+            }
         }
+
     }
 
     @Override
@@ -141,35 +157,5 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void setImageToView(){
 
-        // Save the file in gallery
-        Intent mediaScanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-        File f = new File(mCurrentPhotoPath);
-        Uri contentUri = Uri.fromFile(f);
-        mediaScanIntent.setData(contentUri);
-        this.sendBroadcast(mediaScanIntent);
-
-        // Get the dimensions of the view
-        int targetH = imageView.getMaxHeight();
-        int targetW = imageView.getMaxWidth();
-
-        // Get the dimensions of the bitmap
-        BitmapFactory.Options bmOptions = new BitmapFactory.Options();
-        bmOptions.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(mCurrentPhotoPath, bmOptions);
-        int photoH = bmOptions.outHeight;
-        int photoW = bmOptions.outWidth;
-
-        // Determine how much to scale down image
-        int scaleFactor = Math.min(photoW/targetW, photoH/targetH);
-
-
-        // Decode the image file into a Bitmap sized to fill the View
-        bmOptions.inJustDecodeBounds = false;
-        bmOptions.inSampleSize = scaleFactor;
-
-        Bitmap imageBitmap = BitmapFactory.decodeFile(mCurrentPhotoPath, bmOptions);
-        imageView.setImageBitmap(imageBitmap);
-    }
 }
